@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from config import DPOConfig
 from models import load_tokenizer_and_models
@@ -40,7 +41,11 @@ def main():
     )
 
     set_seed(config.seed)
+
+    # 将 batch_size 附加到输出目录名中，便于区分不同实验
+    config.output_dir = f"{config.output_dir}_bs{config.batch_size}"
     ensure_dir(config.output_dir)
+    print(f"Output directory: {config.output_dir}")
 
     # 加载 tokenizer & 模型
     tokenizer, policy, reference = load_tokenizer_and_models(
