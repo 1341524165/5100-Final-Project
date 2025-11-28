@@ -1,11 +1,10 @@
 # models.py
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from transformers import PreTrainedTokenizer, PreTrainedModel
-from typing import Tuple
+from typing import Tuple, Optional
 import torch
 
-# 如果你要用 LoRA，可以解开下面注释并在 config 里 use_lora=True
-# from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model
 
 
 def load_tokenizer_and_models(
@@ -16,6 +15,7 @@ def load_tokenizer_and_models(
     lora_r: int = 8,
     lora_alpha: int = 16,
     lora_dropout: float = 0.05,
+    torch_dtype: Optional[str] = None,
 ) -> Tuple[PreTrainedTokenizer, PreTrainedModel, PreTrainedModel]:
     """
     返回 tokenizer, policy_model, reference_model
@@ -24,9 +24,21 @@ def load_tokenizer_and_models(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # 解析 dtype
+    dtype_map: dict[str, object] = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16,
+        "fp32": torch.float32,
+        "auto": "auto",
+    }
+    hf_dtype = None
+    if torch_dtype is not None:
+        hf_dtype = dtype_map.get(torch_dtype, None)
+
     policy = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map="auto" if device == "cuda" else None
+        device_map="auto" if device == "cuda" else None,
+        torch_dtype=hf_dtype if hf_dtype is not None else None,
     )
 
     if ref_model_name is None:
@@ -34,23 +46,32 @@ def load_tokenizer_and_models(
 
     reference = AutoModelForCausalLM.from_pretrained(
         ref_model_name,
-        device_map="auto" if device == "cuda" else None
+        device_map="auto" if device == "cuda" else None,
+        torch_dtype=hf_dtype if hf_dtype is not None else None,
     )
     reference.requires_grad_(False)
     reference.eval()
 
     if use_lora:
-        # 你可以根据自己的需求修改 LoRA target modules
-        # lora_config = LoraConfig(
-        #     r=lora_r,
-        #     lora_alpha=lora_alpha,
-        #     lora_dropout=lora_dropout,
-        #     bias="none",
-        #     task_type="CAUSAL_LM",
-        # )
-        # policy = get_peft_model(policy, lora_config)
-        # print(policy.print_trainable_parameters())
-        raise NotImplementedError("LoRA 支持在此处自行打开/修改")
+        # 选择一组通用的 target modules，覆盖 LLaMA / GPT2 常见命名
+        target_modules = [
+            "q_proj", "k_proj", "v_proj", "o_proj",
+            "gate_proj", "up_proj", "down_proj",
+            "c_attn", "c_proj", "c_fc",
+        ]
+        lora_config = LoraConfig(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            bias="none",
+            task_type="CAUSAL_LM",
+            target_modules=target_modules,
+        )
+        policy = get_peft_model(policy, lora_config)
+        try:
+            policy.print_trainable_parameters()
+        except Exception:
+            pass
 
     policy.to(device)
     reference.to(device)

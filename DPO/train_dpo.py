@@ -20,6 +20,16 @@ def parse_args():
     parser.add_argument("--beta", type=float, default=0.1)
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--device", type=str, default="cuda")
+    # OOM 缓解相关
+    parser.add_argument("--dtype", type=str, choices=["auto", "fp16", "bf16", "fp32"], default=None)
+    parser.add_argument("--grad_accum", type=int, default=1, help="gradient_accumulation_steps")
+    parser.add_argument("--eval_interval", type=int, default=500)
+    parser.add_argument("--grad_ckpt", action="store_true", help="enable gradient checkpointing")
+    # LoRA 配置
+    parser.add_argument("--use_lora", action="store_true")
+    parser.add_argument("--lora_r", type=int, default=8)
+    parser.add_argument("--lora_alpha", type=int, default=16)
+    parser.add_argument("--lora_dropout", type=float, default=0.05)
 
     args = parser.parse_args()
     return args
@@ -39,6 +49,13 @@ def main():
         max_length=args.max_length,
         device=args.device,
     )
+    # 透传更多配置
+    config.gradient_accumulation_steps = args.grad_accum
+    config.eval_interval = args.eval_interval
+    config.use_lora = args.use_lora
+    config.lora_r = args.lora_r
+    config.lora_alpha = args.lora_alpha
+    config.lora_dropout = args.lora_dropout
 
     set_seed(config.seed)
 
@@ -56,7 +73,15 @@ def main():
         lora_r=config.lora_r,
         lora_alpha=config.lora_alpha,
         lora_dropout=config.lora_dropout,
+        torch_dtype=args.dtype,
     )
+    if args.grad_ckpt:
+        try:
+            policy.gradient_checkpointing_enable()
+            policy.config.use_cache = False
+            print("Enabled gradient checkpointing for policy model.")
+        except Exception as e:
+            print(f"Enable gradient checkpointing failed: {e}")
 
     # 构建 DataLoader：直接使用 HuggingFace 的 Anthropic/hh-rlhf
     ds = load_dataset("Anthropic/hh-rlhf")
