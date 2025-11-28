@@ -2,9 +2,11 @@ import torch
 from torch.optim import AdamW
 from transformers import get_linear_schedule_with_warmup
 from tqdm import tqdm  # type: ignore
+import os
+import csv
 
 from config import DPOConfig
-from losses import dpo_loss
+from losses import dpo_loss, multi_objective_dpo_loss
 from utils import save_policy_model
 
 
@@ -34,7 +36,15 @@ def train_one_epoch(
             for kk in batch[k]:
                 batch[k][kk] = batch[k][kk].to(device)
 
-        loss = dpo_loss(policy, reference, batch, beta=config.beta)
+        if config.multi_objective and config.mo_weights:
+            loss, _ = multi_objective_dpo_loss(
+                policy, reference, batch,
+                beta=config.beta,
+                weights=config.mo_weights,
+                brevity_coef=config.brevity_coef,
+            )
+        else:
+            loss = dpo_loss(policy, reference, batch, beta=config.beta)
         loss = loss / config.gradient_accumulation_steps
 
         loss.backward()
@@ -48,8 +58,28 @@ def train_one_epoch(
         total_loss += loss.item() * config.gradient_accumulation_steps
         global_step += 1
 
-        if global_step % 50 == 0:
-            print(f"[Epoch {epoch}] Step {global_step} | Loss {total_loss / global_step:.4f}")
+        if global_step % config.logging_steps == 0:
+            avg_tr_loss = total_loss / global_step
+            print(f"[Epoch {epoch}] Step {global_step} | Loss {avg_tr_loss:.4f}")
+            # 记录 step 级指标（训练过程中）
+            try:
+                metrics_steps_path = os.path.join(config.output_dir, "metrics_steps.csv")
+                file_exists = os.path.exists(metrics_steps_path)
+                with open(metrics_steps_path, "a", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    if not file_exists:
+                        writer.writerow(["epoch", "global_step", "step_in_epoch", "train_loss", "lr", "val_loss", "val_accuracy", "val_reward_margin"])
+                    current_lr = optimizer.param_groups[0]["lr"]
+                    writer.writerow([
+                        epoch,
+                        global_step,
+                        step + 1,
+                        f"{avg_tr_loss:.6f}",
+                        f"{current_lr:.6e}",
+                        "", "", ""  # 占位，若无即时验证
+                    ])
+            except Exception as e:
+                print(f"Warning: failed to write metrics_steps.csv: {e}")
 
         # 更新进度条
         current_lr = optimizer.param_groups[0]["lr"]
@@ -62,9 +92,31 @@ def train_one_epoch(
 
         # 按间隔进行验证评估（如果提供了验证集）
         if eval_interval > 0 and val_loader is not None and (global_step % eval_interval == 0):
-            val_loss = evaluate(config, policy, reference, val_loader, device=device)
-            if val_loss is not None:
-                print(f"[Epoch {epoch}] Step {global_step} | Val loss {val_loss:.4f}")
+            val_stats = evaluate(config, policy, reference, val_loader, device=device)
+            if val_stats is not None and val_stats.get("loss") is not None:
+                print(f"[Epoch {epoch}] Step {global_step} | Val loss {val_stats['loss']:.4f} | Val acc {val_stats['accuracy']:.3f} | Val margin {val_stats['reward_margin']:.4f}")
+                # 评估时也将 step 级指标写入（含验证项）
+                try:
+                    metrics_steps_path = os.path.join(config.output_dir, "metrics_steps.csv")
+                    file_exists = os.path.exists(metrics_steps_path)
+                    with open(metrics_steps_path, "a", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        if not file_exists:
+                            writer.writerow(["epoch", "global_step", "step_in_epoch", "train_loss", "lr", "val_loss", "val_accuracy", "val_reward_margin"])
+                        current_lr = optimizer.param_groups[0]["lr"]
+                        avg_tr_loss = total_loss / global_step
+                        writer.writerow([
+                            epoch,
+                            global_step,
+                            step + 1,
+                            f"{avg_tr_loss:.6f}",
+                            f"{current_lr:.6e}",
+                            f"{val_stats.get('loss'):.6f}" if val_stats.get("loss") is not None else "",
+                            f"{val_stats.get('accuracy'):.6f}" if val_stats.get("accuracy") is not None else "",
+                            f"{val_stats.get('reward_margin'):.6f}" if val_stats.get("reward_margin") is not None else "",
+                        ])
+                except Exception as e:
+                    print(f"Warning: failed to write metrics_steps.csv: {e}")
 
     if hasattr(progress, "close"):
         progress.close()
@@ -88,6 +140,9 @@ def evaluate(
     policy.eval()
     total_loss = 0.0
     steps = 0
+    total_correct = 0
+    total_examples = 0
+    total_reward_margin = 0.0
 
     with torch.no_grad():
         for batch in val_loader:
@@ -95,13 +150,54 @@ def evaluate(
                 for kk in batch[k]:
                     batch[k][kk] = batch[k][kk].to(device)
 
-            loss = dpo_loss(policy, reference, batch, beta=config.beta)
+            # 计算损失（与训练保持一致的模式）
+            if config.multi_objective and config.mo_weights:
+                mo_loss, mo_stats = multi_objective_dpo_loss(
+                    policy, reference, batch,
+                    beta=config.beta,
+                    weights=config.mo_weights,
+                    brevity_coef=config.brevity_coef,
+                )
+                loss = mo_loss
+            else:
+                loss = dpo_loss(policy, reference, batch, beta=config.beta)
             total_loss += loss.item()
             steps += 1
 
+            # 统计偏好准确率与奖励边际
+            # 复用 losses.dpo_loss 的内部逻辑：需要各自序列对数似然
+            from losses import sequence_log_prob  # 局部导入避免循环
+            c_ids = batch["chosen_input"]["input_ids"]
+            c_mask = batch["chosen_input"]["attention_mask"]
+            r_ids = batch["rejected_input"]["input_ids"]
+            r_mask = batch["rejected_input"]["attention_mask"]
+
+            pi_c = sequence_log_prob(policy, c_ids, c_mask)
+            pi_r = sequence_log_prob(policy, r_ids, r_mask)
+            ref_c = sequence_log_prob(reference, c_ids, c_mask)
+            ref_r = sequence_log_prob(reference, r_ids, r_mask)
+
+            # 偏好准确率：policy 是否更偏好 chosen
+            correct = (pi_c - pi_r > 0).sum().item()
+            total_correct += correct
+            total_examples += pi_c.shape[0]
+
+            # 奖励边际（DPO 中的隐式奖励差）：beta*(pi_c - ref_c) - beta*(pi_r - ref_r)
+            chosen_rewards = config.beta * (pi_c - ref_c)
+            rejected_rewards = config.beta * (pi_r - ref_r)
+            margin = (chosen_rewards - rejected_rewards).mean().item()
+            total_reward_margin += margin
+
     avg_loss = total_loss / steps if steps > 0 else None
-    print(f"Validation loss: {avg_loss:.4f}" if avg_loss is not None else "No validation steps.")
-    return avg_loss
+    accuracy = (total_correct / total_examples) if total_examples > 0 else None
+    avg_margin = (total_reward_margin / steps) if steps > 0 else None
+
+    if avg_loss is not None:
+        print(f"Validation loss: {avg_loss:.4f} | acc: {accuracy:.3f} | margin: {avg_margin:.4f}")
+    else:
+        print("No validation steps.")
+
+    return {"loss": avg_loss, "accuracy": accuracy, "reward_margin": avg_margin}
 
 
 def train_dpo(
@@ -138,7 +234,8 @@ def train_dpo(
             val_loader=val_loader, eval_interval=config.eval_interval
         )
 
-        val_loss = evaluate(config, policy, reference, val_loader, device=device)
+        val_stats = evaluate(config, policy, reference, val_loader, device=device)
+        val_loss = None if val_stats is None else val_stats.get("loss")
 
         # 简单的 best 模型保存逻辑
         if val_loss is not None:
@@ -148,3 +245,21 @@ def train_dpo(
 
         if config.save_every_epoch:
             save_policy_model(policy, tokenizer, f"{config.output_dir}/epoch_{epoch}")
+
+        # 记录指标到 CSV，方便后期画图
+        try:
+            metrics_path = os.path.join(config.output_dir, "metrics.csv")
+            file_exists = os.path.exists(metrics_path)
+            with open(metrics_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if not file_exists:
+                    writer.writerow(["epoch", "train_loss", "val_loss", "val_accuracy", "val_reward_margin"])
+                writer.writerow([
+                    epoch,
+                    f"{train_loss:.6f}" if train_loss is not None else "",
+                    f"{val_stats.get('loss'):.6f}" if val_stats and val_stats.get("loss") is not None else "",
+                    f"{val_stats.get('accuracy'):.6f}" if val_stats and val_stats.get("accuracy") is not None else "",
+                    f"{val_stats.get('reward_margin'):.6f}" if val_stats and val_stats.get("reward_margin") is not None else "",
+                ])
+        except Exception as e:
+            print(f"Warning: failed to write metrics.csv: {e}")

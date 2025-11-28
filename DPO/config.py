@@ -26,6 +26,11 @@ class DPOConfig:
     beta: float = 0.1   # 温度/强度
     noise_rate: float = 0.0 # 标签噪声比例 (0.0 - 1.0)
     eval_interval: int = 500
+    logging_steps: int = 50  # 训练中每隔多少步写一次 step 级指标
+    # Multi-objective DPO
+    multi_objective: bool = False
+    mo_weights: dict[str, float] | None = None  # 例如 {"base": 0.7, "brevity": 0.3}
+    brevity_coef: float = 0.0  # 用于 brevity 目标的长度惩罚系数
 
     # 设备
     device: str = "cuda"

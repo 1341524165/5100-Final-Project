@@ -61,6 +61,10 @@ The project is built on a custom DPO implementation located in the `DPO/` direct
 ## Quick Start
 
 ```bash
+chmod +x run_noise_sweep.sh
+./run_noise_sweep.sh
 # Train Baseline
-python DPO/train_dpo.py --model_name gpt2 --batch_size 2 --output_dir results/baseline
+python DPO/train_dpo.py --model_name gpt2 --batch_size 2 --output_dir outputs/baseline
+
+python DPO/train_dpo.py --model_name gpt2 --batch_size 2 --num_epochs 1 --noise_rate 0.1 --output_dir outputs/noise_10
 ```
