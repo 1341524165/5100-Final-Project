@@ -1,4 +1,5 @@
 import json
+import random
 from typing import List, Dict
 from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedTokenizer
@@ -16,10 +17,12 @@ class PreferenceDataset(Dataset):
     def __init__(self,
                  data: List[Dict],
                  tokenizer: PreTrainedTokenizer,
-                 max_length: int = 512):
+                 max_length: int = 512,
+                 noise_rate: float = 0.0):
         self.data = data
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.noise_rate = noise_rate
 
     def _encode(self, prompt: str, answer: str):
         text = prompt + answer
@@ -39,6 +42,10 @@ class PreferenceDataset(Dataset):
         prompt = item["prompt"]
         chosen = item["chosen"]
         rejected = item["rejected"]
+
+        # Noise Injection: Randomly flip chosen and rejected
+        if self.noise_rate > 0 and random.random() < self.noise_rate:
+            chosen, rejected = rejected, chosen
 
         return {
             "chosen_input": self._encode(prompt, chosen),
@@ -64,9 +71,11 @@ def build_dataloaders(tokenizer: PreTrainedTokenizer,
                       train_path: str,
                       val_path: str | None,
                       max_length: int,
-                      batch_size: int):
+                      batch_size: int,
+                      noise_rate: float = 0.0):
     train_data = load_jsonl(train_path)
-    train_dataset = PreferenceDataset(train_data, tokenizer, max_length)
+    # Only inject noise into training data
+    train_dataset = PreferenceDataset(train_data, tokenizer, max_length, noise_rate=noise_rate)
 
     train_loader = DataLoader(
         train_dataset,

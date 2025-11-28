@@ -30,6 +30,8 @@ def parse_args():
     parser.add_argument("--lora_r", type=int, default=8)
     parser.add_argument("--lora_alpha", type=int, default=16)
     parser.add_argument("--lora_dropout", type=float, default=0.05)
+    # Noise robustness
+    parser.add_argument("--noise_rate", type=float, default=0.0, help="label noise rate (0.0-1.0)")
 
     args = parser.parse_args()
     return args
@@ -56,6 +58,7 @@ def main():
     config.lora_r = args.lora_r
     config.lora_alpha = args.lora_alpha
     config.lora_dropout = args.lora_dropout
+    config.noise_rate = args.noise_rate
 
     set_seed(config.seed)
 
@@ -96,14 +99,16 @@ def main():
     train_pairs = to_pairs(ds["train"])
     val_pairs = to_pairs(ds["test"]) if "test" in ds else None
 
-    train_dataset = PreferenceDataset(train_pairs, tokenizer, config.max_length)
-    val_dataset = PreferenceDataset(val_pairs, tokenizer, config.max_length) if val_pairs is not None else None
+    # Create datasets with noise injection (only for training)
+    train_dataset = PreferenceDataset(train_pairs, tokenizer, config.max_length, noise_rate=config.noise_rate)
+    val_dataset = PreferenceDataset(val_pairs, tokenizer, config.max_length, noise_rate=0.0) if val_pairs is not None else None
 
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False) if val_dataset is not None else None
 
     print(f"Loaded HH-RLHF dataset | train: {len(train_dataset)} samples"
           + (f", val: {len(val_dataset)} samples" if val_dataset is not None else ", val: None"))
+    print(f"Noise rate: {config.noise_rate:.1%} (applied to training set only)")
 
     # 开始训练
     train_dpo(

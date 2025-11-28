@@ -24,6 +24,7 @@ class DPOConfig:
 
     # DPO
     beta: float = 0.1   # 温度/强度
+    noise_rate: float = 0.0 # 标签噪声比例 (0.0 - 1.0)
     eval_interval: int = 500
 
     # 设备
