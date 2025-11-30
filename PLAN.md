@@ -67,4 +67,10 @@ chmod +x run_noise_sweep.sh
 python DPO/train_dpo.py --model_name gpt2 --batch_size 2 --output_dir outputs/baseline
 
 python DPO/train_dpo.py --model_name gpt2 --batch_size 2 --num_epochs 1 --noise_rate 0.1 --output_dir outputs/noise_10
+
+python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --num_epochs 1 --base_output outputs/mo_groupA --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15" --brevity_coefs "0.02"
+
+python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --num_epochs 1 --base_output outputs/mo_groupB --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15" --brevity_coefs "0.01"
+
+python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --num_epochs 1 --base_output outputs/mo_groupC --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15" --brevity_coefs "0.0"
 ```
