@@ -6,7 +6,7 @@ import os
 import csv
 
 from config import DPOConfig
-from losses import dpo_loss, multi_objective_dpo_loss
+from losses import dpo_loss, multi_objective_dpo_loss, kl_penalty_logratio
 from utils import save_policy_model
 
 
@@ -42,9 +42,12 @@ def train_one_epoch(
                 beta=config.beta,
                 weights=config.mo_weights,
                 brevity_coef=config.brevity_coef,
+                kl_weight=config.kl_weight,
             )
         else:
             loss = dpo_loss(policy, reference, batch, beta=config.beta)
+            if config.kl_weight > 0.0:
+                loss = loss + config.kl_weight * kl_penalty_logratio(policy, reference, batch)
         loss = loss / config.gradient_accumulation_steps
 
         loss.backward()
@@ -157,10 +160,13 @@ def evaluate(
                     beta=config.beta,
                     weights=config.mo_weights,
                     brevity_coef=config.brevity_coef,
+                    kl_weight=config.kl_weight,
                 )
                 loss = mo_loss
             else:
                 loss = dpo_loss(policy, reference, batch, beta=config.beta)
+                if config.kl_weight > 0.0:
+                    loss = loss + config.kl_weight * kl_penalty_logratio(policy, reference, batch)
             total_loss += loss.item()
             steps += 1
 

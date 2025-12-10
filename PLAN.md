@@ -73,4 +73,8 @@ python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --nu
 python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --num_epochs 1 --base_output outputs/mo_groupB --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15" --brevity_coefs "0.01"
 
 python experiments/run_multi_objective.py --model_name gpt2 --batch_size 16 --num_epochs 1 --base_output outputs/mo_groupC --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15" --brevity_coefs "0.0"
+
+python experiments/run_kl_combo.py --weights_list "base=0.6,brevity=0.4;base=0.75,brevity=0.25;base=0.85,brevity=0.15"
+
+python DPO/train_dpo.py --model_name gpt2 --batch_size 16 --num_epochs 1 --multi_objective --mo_weights "base=0.85,brevity=0.15" --brevity_coef 0.01 --kl_weight 0.05 --output_dir outputs/mo_kl
 ```

@@ -75,6 +75,33 @@ def dpo_loss(
     return loss
 
 
+def kl_penalty_logratio(
+    policy: PreTrainedModel,
+    reference: PreTrainedModel,
+    batch: dict,
+) -> torch.Tensor:
+    """
+    计算序列级 KL 近似惩罚（基于 log-ratio 的 L2）
+      ratio = log πθ(y|x) - log πref(y|x)
+      penalty = 0.5 * mean(ratio_c^2 + ratio_r^2)
+    """
+    c_ids = batch["chosen_input"]["input_ids"]
+    c_mask = batch["chosen_input"]["attention_mask"]
+    r_ids = batch["rejected_input"]["input_ids"]
+    r_mask = batch["rejected_input"]["attention_mask"]
+
+    pi_c = sequence_log_prob(policy, c_ids, c_mask)
+    pi_r = sequence_log_prob(policy, r_ids, r_mask)
+    with torch.no_grad():
+        ref_c = sequence_log_prob(reference, c_ids, c_mask)
+        ref_r = sequence_log_prob(reference, r_ids, r_mask)
+
+    ratio_c = pi_c - ref_c
+    ratio_r = pi_r - ref_r
+    penalty = 0.5 * (ratio_c.pow(2) + ratio_r.pow(2)).mean()
+    return penalty
+
+
 def multi_objective_dpo_loss(
     policy: PreTrainedModel,
     reference: PreTrainedModel,
@@ -82,6 +109,7 @@ def multi_objective_dpo_loss(
     beta: float = 0.1,
     weights: dict[str, float] | None = None,
     brevity_coef: float = 0.0,
+    kl_weight: float = 0.0,
 ) -> tuple[torch.Tensor, dict]:
     """
     多目标 DPO：L_total = Σ w_i * L_DPO^i
@@ -116,11 +144,12 @@ def multi_objective_dpo_loss(
             pi_c, pi_r = pi_c_base, pi_r_base
             ref_c, ref_r = ref_c_base, ref_r_base
         elif name == "brevity":
-            # 对 policy/ref 的 log prob 加长度惩罚（鼓励短输出）
+            # 仅对 policy 的 log prob 加长度惩罚（reference 不动），防止在 DPO 对比项里相消
+            # 鼓励更短输出：更长的答案被减分
             pi_c = pi_c_base - brevity_coef * c_len
             pi_r = pi_r_base - brevity_coef * r_len
-            ref_c = ref_c_base - brevity_coef * c_len
-            ref_r = ref_r_base - brevity_coef * r_len
+            ref_c = ref_c_base
+            ref_r = ref_r_base
         else:
             # 未知目标，跳过
             continue
@@ -140,4 +169,12 @@ def multi_objective_dpo_loss(
         per_obj_stats[f"{name}_margin"] = margin
 
     assert total_loss is not None
+
+    # KL（log-ratio L2）约束
+    kl_pen = torch.tensor(0.0, dtype=pi_c_base.dtype, device=pi_c_base.device)
+    if kl_weight > 0.0:
+        kl_pen = kl_penalty_logratio(policy, reference, batch)
+        total_loss = total_loss + kl_weight * kl_pen
+        per_obj_stats["kl_penalty"] = kl_pen.item()
+
     return total_loss, per_obj_stats

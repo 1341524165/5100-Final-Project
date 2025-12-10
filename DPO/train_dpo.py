@@ -36,6 +36,8 @@ def parse_args():
     parser.add_argument("--multi_objective", action="store_true")
     parser.add_argument("--mo_weights", type=str, default="", help="e.g. base=0.7,brevity=0.3")
     parser.add_argument("--brevity_coef", type=float, default=0.0)
+    # Constraints
+    parser.add_argument("--kl_weight", type=float, default=0.0, help="KL(log-ratio L2) constraint weight")
 
     args = parser.parse_args()
     return args
@@ -66,6 +68,7 @@ def main():
     # Multi-objective
     config.multi_objective = args.multi_objective
     config.brevity_coef = args.brevity_coef
+    config.kl_weight = args.kl_weight
     if args.mo_weights:
         mo_weights = {}
         for kv in args.mo_weights.split(","):

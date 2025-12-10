@@ -31,6 +31,8 @@ class DPOConfig:
     multi_objective: bool = False
     mo_weights: dict[str, float] | None = None  # 例如 {"base": 0.7, "brevity": 0.3}
     brevity_coef: float = 0.0  # 用于 brevity 目标的长度惩罚系数
+    # Constraints
+    kl_weight: float = 0.0  # KL（log-ratio L2 近似）约束权重，0 表示关闭
 
     # 设备
     device: str = "cuda"

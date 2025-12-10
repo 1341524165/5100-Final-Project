@@ -12,7 +12,7 @@ def parse_args():
     p.add_argument("--num_epochs", type=int, default=1)
     p.add_argument("--max_length", type=int, default=512)
     p.add_argument("--device", type=str, default="cuda")
-    p.add_argument("--lr", type=float, default=5e-5)
+    p.add_argument("--lr", type=float, default=1e-5)
     # Efficiency / stability
     p.add_argument("--dtype", type=str, choices=["auto", "fp16", "bf16", "fp32"], default=None)
     p.add_argument("--grad_accum", type=int, default=1)
