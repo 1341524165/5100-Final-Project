@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument("--model_name", type=str, default="meta-llama/Llama-2-7b-hf")
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--num_epochs", type=int, default=3)
-    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--lr", type=float, default=5e-5)
     parser.add_argument("--beta", type=float, default=0.1)
     parser.add_argument("--max_length", type=int, default=512)
     parser.add_argument("--device", type=str, default="cuda")
